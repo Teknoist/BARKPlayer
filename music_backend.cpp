@@ -138,6 +138,8 @@ void Decoder::decode_loop() {
                  g_printerr("Decoder: Failed to seek to frame %lu\n", target_frame);
              }
         }
+    } else {
+        mp4read_seek(0); // Start from beginning
     }
 
     int fd = open(PIPE_PATH, O_WRONLY);
