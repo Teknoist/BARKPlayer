@@ -5,7 +5,7 @@ LARK - Libre Audiobook Reader for Kindle
 
 LARK is a free **M4B** audiobook reader for jailbroken Kindles (currently arm-hf version only - firmware 5.16+).
 
-![Screenshot](assets/screenshot.jpg)
+![Screenshot](assets/screenshot.png)
 
 It supports audiobooks in M4B format and AAC encoding. When downloading audiobooks, make sure to choose this format. AAC is the most common format for M4B audiobooks, however this format supports other encodings too.
 
