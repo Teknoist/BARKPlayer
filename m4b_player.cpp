@@ -9,9 +9,18 @@
 #include <pwd.h>
 #include <string>
 #include <fstream>
+#include <vector>
 
 //#include <iostream>
 #include <map>
+
+// Chapter structure
+struct Chapter {
+    int start_time; // in seconds
+    std::string name;
+};
+
+std::vector<Chapter> current_chapters;
 
 #include "music_backend.h"
 #include "openlipc/openlipc.h"
@@ -163,6 +172,44 @@ void load_history() {
     // Set last_timestamp if current_file exists in history
     if (!current_file.empty() && playback_history.count(current_file)) {
         last_timestamp = playback_history[current_file];
+    }
+}
+
+int parse_time_to_seconds(const std::string& time_str) {
+    int hours = 0, minutes = 0, seconds = 0;
+    sscanf(time_str.c_str(), "%d:%d:%d", &hours, &minutes, &seconds);
+    return hours * 3600 + minutes * 60 + seconds;
+}
+
+void load_chapters(const std::string& audio_file) {
+    current_chapters.clear();
+    
+    // Create chapter file path by replacing extension with .chapter.txt
+    std::string chapter_file = audio_file;
+    size_t dot_pos = chapter_file.find_last_of('.');
+    if (dot_pos != std::string::npos) {
+        chapter_file = chapter_file.substr(0, dot_pos) + ".chapter.txt";
+    } else {
+        chapter_file += ".chapter.txt";
+    }
+    
+    std::ifstream in(chapter_file);
+    if (in.is_open()) {
+        std::string line;
+        while (std::getline(in, line)) {
+            size_t pipe_pos = line.find('|');
+            if (pipe_pos != std::string::npos) {
+                std::string time_str = line.substr(0, pipe_pos);
+                std::string chapter_name = line.substr(pipe_pos + 1);
+                
+                Chapter chapter;
+                chapter.start_time = parse_time_to_seconds(time_str);
+                chapter.name = chapter_name;
+                current_chapters.push_back(chapter);
+            }
+        }
+        in.close();
+        g_print("Loaded %zu chapters from %s\n", current_chapters.size(), chapter_file.c_str());
     }
 }
 
@@ -335,6 +382,10 @@ void on_file_open(const char* filepath) {
             backend.meta_artist.c_str(),
             backend.meta_album.c_str());
     update_metadata_ui();
+    
+    // Load chapters for this audio file
+    load_chapters(filepath);
+    
     g_print("Starting playback for %s at %d seconds\n", filepath, last_timestamp);
     backend.play_file(filepath, last_timestamp);
 }
@@ -397,6 +448,78 @@ void on_history_clicked(GtkWidget *widget, gpointer data) {
             gtk_tree_model_get(model, &iter, 0, &file, -1);
             on_file_open(file);
             g_free(file);
+        }
+    }
+    
+    gtk_widget_destroy(dialog);
+}
+
+void on_chapters_clicked(GtkWidget *widget, gpointer data) {
+    if (current_chapters.empty()) {
+        GtkWidget *message_dialog = gtk_message_dialog_new(GTK_WINDOW(window),
+                                                           GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                           GTK_MESSAGE_INFO,
+                                                           GTK_BUTTONS_OK,
+                                                           "No chapters found for this audio file.");
+        gtk_dialog_run(GTK_DIALOG(message_dialog));
+        gtk_widget_destroy(message_dialog);
+        return;
+    }
+    
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Chapters",
+                                                     GTK_WINDOW(window),
+                                                     GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                     GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+                                                     NULL);
+    
+    GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *tree_view = gtk_tree_view_new();
+    GtkListStore *store = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_STRING); // Time, Chapter Name
+    
+    for (size_t i = 0; i < current_chapters.size(); i++) {
+        GtkTreeIter iter;
+        gtk_list_store_append(store, &iter);
+        
+        // Format time as HH:MM:SS
+        int time = current_chapters[i].start_time;
+        char time_str[9];
+        snprintf(time_str, sizeof(time_str), "%02d:%02d:%02d", 
+                 time / 3600, (time % 3600) / 60, time % 60);
+        
+        gtk_list_store_set(store, &iter, 0, time_str, 1, current_chapters[i].name.c_str(), -1);
+    }
+    
+    gtk_tree_view_set_model(GTK_TREE_VIEW(tree_view), GTK_TREE_MODEL(store));
+    
+    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+    GtkTreeViewColumn *time_column = gtk_tree_view_column_new_with_attributes("Time", renderer, "text", 0, NULL);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(tree_view), time_column);
+    
+    GtkTreeViewColumn *name_column = gtk_tree_view_column_new_with_attributes("Chapter", renderer, "text", 1, NULL);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(tree_view), name_column);
+    
+    gtk_container_add(GTK_CONTAINER(content_area), tree_view);
+    gtk_widget_show_all(dialog);
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree_view));
+        GtkTreeIter iter;
+        GtkTreeModel *model;
+        if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+            char *time_str;
+            gtk_tree_model_get(model, &iter, 0, &time_str, -1);
+            
+            // Parse time string back to seconds
+            int seek_time = parse_time_to_seconds(std::string(time_str));
+            
+            // Seek to the chapter start time
+            if (!current_file.empty()) {
+                last_timestamp = seek_time;
+                backend.play_file(current_file.c_str(), seek_time);
+                g_print("Seeking to chapter at %d seconds (%s)\n", seek_time, time_str);
+            }
+            
+            g_free(time_str);
         }
     }
     
@@ -512,7 +635,7 @@ int main(int argc, char *argv[]) {
     GtkWidget *bot_hbox = gtk_hbox_new(FALSE, 10);
     gtk_box_pack_start(GTK_BOX(main_vbox), bot_hbox, FALSE, FALSE, 40); // 20px bottom padding
 
-    // Left Buttons: Open, History
+    // Left Buttons: Open, History, Chapters
     GtkWidget *btn_open = create_button_from_icon(open_icon, 10);
     gtk_widget_set_size_request(btn_open, 80, 80);
     g_signal_connect(btn_open, "clicked", G_CALLBACK(on_open_dialog_clicked), NULL);
@@ -522,6 +645,12 @@ int main(int argc, char *argv[]) {
     gtk_widget_set_size_request(btn_history, 80, 80);
     g_signal_connect(btn_history, "clicked", G_CALLBACK(on_history_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(bot_hbox), btn_history, FALSE, FALSE, 0);
+
+    // Chapter button (using a simple label for now)
+    GtkWidget *btn_chapters = gtk_button_new_with_label("CH");
+    gtk_widget_set_size_request(btn_chapters, 80, 80);
+    g_signal_connect(btn_chapters, "clicked", G_CALLBACK(on_chapters_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(bot_hbox), btn_chapters, FALSE, FALSE, 0);
 
     // Spacer
     GtkWidget *spacer = gtk_label_new("");
