@@ -95,17 +95,4 @@ private:
     static gboolean bus_callback_func(GstBus *bus, GstMessage *msg, gpointer data);
 };
 
-#include <vector>
-#include <string>
-
-struct Chapter {
-    uint64_t time_ms;
-    std::string title;
-};
-
-extern std::vector<Chapter> g_chapters;
-
-// audio dosyası açılınca çağrılacak
-void load_chapters_for_file(const char* audioPath);
-
 #endif // MUSIC_BACKEND_H
