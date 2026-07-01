@@ -1,0 +1,55 @@
+name: Build BARKPlayer
+
+on:
+  push:
+    branches:
+      - main
+      - improve-barkplayer-ci
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package source and optional Kindle build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ make pkg-config zip
+
+      - name: Detect Kindle cross-build inputs
+        id: detect
+        shell: bash
+        run: |
+          if [ -f armhf-toolchain.cmake ]; then
+            echo "can_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_build=false" >> "$GITHUB_OUTPUT"
+            echo "No armhf-toolchain.cmake found; workflow will still create a source package."
+          fi
+
+      - name: Kindle cross-build
+        if: steps.detect.outputs.can_build == 'true'
+        run: |
+          chmod +x scripts/build_kindle.sh
+          ./scripts/build_kindle.sh
+
+      - name: Package BARKPlayer
+        run: |
+          chmod +x scripts/package_release.sh
+          ./scripts/package_release.sh
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BARKPlayer-package
+          path: dist/BARKPlayer.zip
+          if-no-files-found: error
